@@ -1,3 +1,6 @@
+import 'package:flutter/material.dart';
+import 'screens/setup_screen.dart';
+import 'theme/app_theme.dart';
 import 'services/settings_service.dart';
 
 void main() async {
