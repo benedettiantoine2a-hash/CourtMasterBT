@@ -3,6 +3,7 @@ import '../models/match_state.dart';
 import '../models/player.dart';
 import '../theme/app_theme.dart';
 import 'scoreboard_screen.dart';
+import 'settings_screen.dart';
 
 class SetupScreen extends StatefulWidget {
   const SetupScreen({super.key});
@@ -24,6 +25,12 @@ class _SetupScreenState extends State<SetupScreen> {
         backgroundColor: Colors.transparent,
         elevation: 0,
         centerTitle: true,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.settings, color: AppTheme.neonYellow),
+            onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (context) => const SettingsScreen())),
+          ),
+        ],
       ),
       body: Padding(
         padding: const EdgeInsets.all(24.0),
