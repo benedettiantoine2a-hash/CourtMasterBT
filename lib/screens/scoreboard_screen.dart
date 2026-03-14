@@ -32,7 +32,7 @@ class _ScoreboardScreenState extends State<ScoreboardScreen> {
 
   void _handleKeyAction(VolumeKey key, bool isLongPress) {
     setState(() {
-      if (key == VolumeKey.P1) {
+      if (key == VolumeKey.TeamA) {
         if (isLongPress) {
           _announceScore();
         } else {

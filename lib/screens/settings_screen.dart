@@ -15,9 +15,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
   late VolumeKeyService _keyCaptureService;
 
   bool _enabled = false;
-  int _p1Key = 0;
-  int _p2Key = 0;
-  int? _listeningFor; // null, 1 ou 2
+  List<int> _teamAKeys = [];
+  List<int> _teamBKeys = [];
+  int? _listeningFor; // null, 1 (Team A) ou 2 (Team B)
 
   @override
   void initState() {
@@ -28,38 +28,54 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Future<void> _loadSettings() async {
     final enabled = await _settingsService.isInterceptionEnabled();
-    final p1 = await _settingsService.getPlayer1KeyCode();
-    final p2 = await _settingsService.getPlayer2KeyCode();
+    final p1 = await _settingsService.getTeamAKeyCodes();
+    final p2 = await _settingsService.getTeamBKeyCodes();
     setState(() {
       _enabled = enabled;
-      _p1Key = p1;
-      _p2Key = p2;
+      _teamAKeys = p1;
+      _teamBKeys = p2;
     });
   }
 
-  void _handleKeyCaptured(int player, int keyCode) {
-    if (_listeningFor == player) {
+  void _handleKeyCaptured(int teamIndex, int keyCode) {
+    if (_listeningFor == teamIndex) {
       setState(() {
-        if (player == 1) {
-          _p1Key = keyCode;
-          _settingsService.setPlayer1KeyCode(keyCode);
+        if (teamIndex == 1) {
+          if (!_teamAKeys.contains(keyCode)) {
+            _teamAKeys.add(keyCode);
+            _settingsService.setTeamAKeyCodes(_teamAKeys);
+          }
         } else {
-          _p2Key = keyCode;
-          _settingsService.setPlayer2KeyCode(keyCode);
+          if (!_teamBKeys.contains(keyCode)) {
+            _teamBKeys.add(keyCode);
+            _settingsService.setTeamBKeyCodes(_teamBKeys);
+          }
         }
         _listeningFor = null;
       });
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Touche enregistrée pour Joueur $player : $keyCode")),
+        SnackBar(content: Text("Touche ajoutée pour l'Équipe ${teamIndex == 1 ? 'A' : 'B'} : $keyCode")),
       );
     }
   }
 
-  void _startListening(int player) {
+  void _startListening(int teamIndex) {
     setState(() {
-      _listeningFor = player;
+      _listeningFor = teamIndex;
     });
-    _settingsService.startListening(player);
+    _settingsService.startListening(teamIndex);
+  }
+
+  void _clearKeys(int teamIndex) {
+    setState(() {
+      if (teamIndex == 1) {
+        _teamAKeys = [];
+        _settingsService.setTeamAKeyCodes([]);
+      } else {
+        _teamBKeys = [];
+        _settingsService.setTeamBKeyCodes([]);
+      }
+    });
   }
 
   @override
@@ -69,6 +85,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
         title: const Text("PARAMÈTRES", style: TextStyle(color: AppTheme.neonYellow, fontWeight: FontWeight.bold)),
         backgroundColor: Colors.transparent,
         elevation: 0,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back, color: Colors.white),
+          onPressed: () => Navigator.pop(context),
+        ),
       ),
       body: Padding(
         padding: const EdgeInsets.all(24.0),
@@ -88,14 +108,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
             const SizedBox(height: 32),
             
-            _sectionTitle("CONFIGURATION DES TOUCHES"),
-            _keyConfigTile(1, _p1Key),
+            _sectionTitle("CONFIGURATION DES ÉQUIPES"),
+            _keyConfigTile(1, _teamAKeys, "A"),
             const SizedBox(height: 16),
-            _keyConfigTile(2, _p2Key),
+            _keyConfigTile(2, _teamBKeys, "B"),
             
             const Spacer(),
             const Text(
-              "Note: Les touches configurées ne fonctionneront que si l'interrupteur ci-dessus est activé.",
+              "Note: Appuyez sur 'CONFIGURER' puis sur une touche de votre module Bluetooth pour l'ajouter. Vous pouvez ajouter plusieurs touches par équipe.",
               style: TextStyle(color: Colors.white38, fontStyle: FontStyle.italic),
             ),
             const SizedBox(height: 20),
@@ -112,8 +132,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  Widget _keyConfigTile(int player, int keyCode) {
-    bool isListening = _listeningFor == player;
+  Widget _keyConfigTile(int teamIndex, List<int> keyCodes, String teamLetter) {
+    bool isListening = _listeningFor == teamIndex;
     
     return Container(
       padding: const EdgeInsets.all(16),
@@ -122,29 +142,43 @@ class _SettingsScreenState extends State<SettingsScreen> {
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: isListening ? AppTheme.neonYellow : Colors.white24),
       ),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text("Joueur $player", style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                const SizedBox(height: 4),
-                Text(
-                  isListening ? "Appuyez sur une touche..." : "Code actuel : $keyCode",
-                  style: TextStyle(color: isListening ? AppTheme.neonYellow : Colors.white54),
+          Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text("Équipe $teamLetter", style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 4),
+                    Text(
+                      isListening ? "Appuyez sur une touche..." : (keyCodes.isEmpty ? "Pas de touche configurée" : "Codes : ${keyCodes.join(', ')}"),
+                      style: TextStyle(color: isListening ? AppTheme.neonYellow : Colors.white54),
+                    ),
+                  ],
                 ),
-              ],
-            ),
+              ),
+              ElevatedButton(
+                onPressed: isListening ? null : () => _startListening(teamIndex),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: isListening ? Colors.grey : AppTheme.electricCyan.withOpacity(0.2),
+                  foregroundColor: AppTheme.electricCyan,
+                ),
+                child: Text(isListening ? "ÉCOUTE..." : "CONFIGURER"),
+              ),
+            ],
           ),
-          ElevatedButton(
-            onPressed: isListening ? null : () => _startListening(player),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: isListening ? Colors.grey : AppTheme.electricCyan.withOpacity(0.2),
-              foregroundColor: AppTheme.electricCyan,
+          if (keyCodes.isNotEmpty && !isListening)
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton.icon(
+                onPressed: () => _clearKeys(teamIndex),
+                icon: const Icon(Icons.delete_outline, size: 16, color: Colors.redAccent),
+                label: const Text("Effacer", style: TextStyle(color: Colors.redAccent, fontSize: 12)),
+              ),
             ),
-            child: Text(isListening ? "ÉCOUTE..." : "CONFIGURER"),
-          ),
         ],
       ),
     );

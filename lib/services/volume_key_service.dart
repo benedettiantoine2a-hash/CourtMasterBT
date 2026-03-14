@@ -1,14 +1,14 @@
 import 'dart:async';
 import 'package:flutter/services.dart';
 
-enum VolumeKey { P1, P2 }
+enum VolumeKey { TeamA, TeamB }
 enum KeyEventType { DOWN, UP }
 
 class VolumeKeyService {
   static const _channel = MethodChannel('com.antigravity.courtmaster_bt/volume_keys');
   
   final Function(VolumeKey key, bool isLongPress)? onKeyAction;
-  final Function(int player, int keyCode)? onKeyCaptured;
+  final Function(int teamIndex, int keyCode)? onKeyCaptured;
   
   VolumeKey? _currentKey;
   static const _longPressDuration = Duration(milliseconds: 600);
@@ -24,7 +24,7 @@ class VolumeKeyService {
       final String keyStr = call.arguments['key'];
       final String eventStr = call.arguments['event'];
       
-      final key = (keyStr == "P1") ? VolumeKey.P1 : VolumeKey.P2;
+      final key = (keyStr == "P1") ? VolumeKey.TeamA : VolumeKey.TeamB;
       final event = (eventStr == "DOWN") ? KeyEventType.DOWN : KeyEventType.UP;
 
       if (event == KeyEventType.DOWN) {
@@ -44,7 +44,7 @@ class VolumeKeyService {
         _currentKey = null;
       }
     } else if (call.method == "onKeyCaptured") {
-      final int player = call.arguments['player'];
+      final int player = call.arguments['player']; // On garde 'player' pour le canal natif pour l'instant
       final int keyCode = call.arguments['keyCode'];
       onKeyCaptured?.call(player, keyCode);
     }

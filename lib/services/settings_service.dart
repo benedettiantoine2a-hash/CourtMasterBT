@@ -1,25 +1,30 @@
+import 'dart:convert';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class SettingsService {
   static const _channel = MethodChannel('com.antigravity.courtmaster_bt/volume_keys');
   
-  static const String _keyP1 = 'player1_keycode';
-  static const String _keyP2 = 'player2_keycode';
+  static const String _keyTeamA = 'teamA_keycodes';
+  static const String _keyTeamB = 'teamB_keycodes';
   static const String _keyEnabled = 'external_commands_enabled';
 
-  // KeyCodes par défaut (Volume Up / Down sur Android)
-  static const int defaultP1 = 24;
-  static const int defaultP2 = 25;
+  // KeyCodes par défaut
+  static const List<int> defaultTeamA = [24]; // Volume Up
+  static const List<int> defaultTeamB = [25]; // Volume Down
 
-  Future<int> getPlayer1KeyCode() async {
+  Future<List<int>> getTeamAKeyCodes() async {
     final prefs = await SharedPreferences.getInstance();
-    return prefs.getInt(_keyP1) ?? defaultP1;
+    final String? encoded = prefs.getString(_keyTeamA);
+    if (encoded == null) return defaultTeamA;
+    return List<int>.from(jsonDecode(encoded));
   }
 
-  Future<int> getPlayer2KeyCode() async {
+  Future<List<int>> getTeamBKeyCodes() async {
     final prefs = await SharedPreferences.getInstance();
-    return prefs.getInt(_keyP2) ?? defaultP2;
+    final String? encoded = prefs.getString(_keyTeamB);
+    if (encoded == null) return defaultTeamB;
+    return List<int>.from(jsonDecode(encoded));
   }
 
   Future<bool> isInterceptionEnabled() async {
@@ -27,15 +32,15 @@ class SettingsService {
     return prefs.getBool(_keyEnabled) ?? false;
   }
 
-  Future<void> setPlayer1KeyCode(int keyCode) async {
+  Future<void> setTeamAKeyCodes(List<int> keyCodes) async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setInt(_keyP1, keyCode);
+    await prefs.setString(_keyTeamA, jsonEncode(keyCodes));
     await _syncWithNative();
   }
 
-  Future<void> setPlayer2KeyCode(int keyCode) async {
+  Future<void> setTeamBKeyCodes(List<int> keyCodes) async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setInt(_keyP2, keyCode);
+    await prefs.setString(_keyTeamB, jsonEncode(keyCodes));
     await _syncWithNative();
   }
 
@@ -46,8 +51,8 @@ class SettingsService {
   }
 
   Future<void> _syncWithNative() async {
-    final p1 = await getPlayer1KeyCode();
-    final p2 = await getPlayer2KeyCode();
+    final p1 = await getTeamAKeyCodes();
+    final p2 = await getTeamBKeyCodes();
     final enabled = await isInterceptionEnabled();
     
     await _channel.invokeMethod('updateConfig', {
@@ -57,8 +62,8 @@ class SettingsService {
     });
   }
 
-  Future<void> startListening(int player) async {
-    await _channel.invokeMethod('startListening', {'player': player});
+  Future<void> startListening(int teamIndex) async {
+    await _channel.invokeMethod('startListening', {'player': teamIndex});
   }
 
   // Initialisation au démarrage de l'app
