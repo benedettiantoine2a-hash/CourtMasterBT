@@ -12,6 +12,8 @@ jobs:
   build:
     name: Build APK
     runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     permissions:
       contents: write
     steps:
@@ -53,5 +55,5 @@ jobs:
       - name: Upload APK Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: release-apk
+          name: courtmaster-premium-apk
           path: build/app/outputs/flutter-apk/*.apk

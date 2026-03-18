@@ -1,12 +1,17 @@
 import 'dart:collection';
+import 'dart:math' as math;
 import '../models/match_state.dart';
+import '../models/player.dart';
+import 'locker_room.dart';
 
 class MatchLogic {
   final MatchSettings settings;
+  final List<Player> teamAPlayers;
+  final List<Player> teamBPlayers;
   final ListQueue<ScoreState> _history = ListQueue<ScoreState>();
   late ScoreState _currentState;
 
-  MatchLogic(this.settings) {
+  MatchLogic(this.settings, {required this.teamAPlayers, required this.teamBPlayers}) {
     _currentState = ScoreState(
       gamesTeamA: List.filled(settings.numberOfSets, 0),
       gamesTeamB: List.filled(settings.numberOfSets, 0),
@@ -42,7 +47,7 @@ class MatchLogic {
 
     if (team == "A") {
       if (pA == 40) {
-        if (settings.mode == MatchMode.padel && settings.goldenPoint && pB == 40) {
+        if (settings.goldenPoint && pB == 40) {
           _winGame("A");
         } else if (pB == 40) {
           _currentState = _currentState.copyWith(pointsA: 41); // Advantage
@@ -58,7 +63,7 @@ class MatchLogic {
       }
     } else {
       if (pB == 40) {
-        if (settings.mode == MatchMode.padel && settings.goldenPoint && pA == 40) {
+        if (settings.goldenPoint && pA == 40) {
           _winGame("B");
         } else if (pA == 40) {
           _currentState = _currentState.copyWith(pointsB: 41); // Advantage
@@ -88,10 +93,9 @@ class MatchLogic {
 
     if (team == "A") tpA++; else tpB++;
 
-    // Rotation du serveur en Tie-break: 1er point servA, puis 2 points servB, etc.
     int totalPoints = tpA + tpB;
     if (totalPoints % 2 != 0) {
-       _currentState = _currentState.copyWith(serverIndex: (_currentState.serverIndex + 1) % 4);
+       _currentState = _currentState.copyWith(serverIndex: (_currentState.serverIndex + 1) % (settings.isDouble ? 4 : 2));
     }
 
     _currentState = _currentState.copyWith(tieBreakPointsA: tpA, tieBreakPointsB: tpB);
@@ -110,7 +114,6 @@ class MatchLogic {
 
     if (team == "A") gA[currentSet]++; else gB[currentSet]++;
 
-    // Reset points
     _currentState = _currentState.copyWith(
       pointsA: 0,
       pointsB: 0,
@@ -119,7 +122,7 @@ class MatchLogic {
       isTieBreak: false,
       gamesTeamA: gA,
       gamesTeamB: gB,
-      serverIndex: (_currentState.serverIndex + 1) % 4, // Rotation simple
+      serverIndex: (_currentState.serverIndex + 1) % (settings.isDouble ? 4 : 2),
     );
 
     _checkSetStatus();
@@ -140,10 +143,6 @@ class MatchLogic {
   }
 
   void _winSet(String team) {
-    int setsA = _currentState.gamesTeamA.where((g) => g >= 6).length; // Approximatif
-    int setsB = _currentState.gamesTeamB.where((g) => g >= 6).length; // Approximatif
-    
-    // Better set counting
     int completedSetsA = 0;
     int completedSetsB = 0;
     for(int i=0; i <= _currentState.currentSet; i++) {
@@ -157,11 +156,76 @@ class MatchLogic {
 
     if (completedSetsA >= winThreshold) {
       _currentState = _currentState.copyWith(matchFinished: true, winner: "A");
+      _finalizeMatch("A");
     } else if (completedSetsB >= winThreshold) {
       _currentState = _currentState.copyWith(matchFinished: true, winner: "B");
+      _finalizeMatch("B");
     } else {
       _currentState = _currentState.copyWith(currentSet: _currentState.currentSet + 1);
     }
+  }
+
+  void _finalizeMatch(String winner) async {
+    final locker = LockerRoom();
+    
+    await locker.saveMatch({
+      'id': DateTime.now().millisecondsSinceEpoch.toString(),
+      'date': DateTime.now().toIso8601String(),
+      'teamA': teamAPlayers.map((p) => p.name).toList(),
+      'teamB': teamBPlayers.map((p) => p.name).toList(),
+      'playerIdsA': teamAPlayers.map((p) => p.id).toList(), 
+      'playerIdsB': teamBPlayers.map((p) => p.id).toList(),
+      'scoreA': _currentState.gamesTeamA,
+      'scoreB': _currentState.gamesTeamB,
+      'winner': winner,
+      'isDouble': settings.isDouble,
+      'isRanked': settings.isRanked,
+    });
+
+    if (!settings.isRanked) return;
+
+    // Calcul Elo
+    double avgEloA = teamAPlayers.map((p) => p.elo).reduce((a, b) => a + b) / teamAPlayers.length;
+    double avgEloB = teamBPlayers.map((p) => p.elo).reduce((a, b) => a + b) / teamBPlayers.length;
+
+    for (var p in teamAPlayers) {
+      bool isWinner = (winner == "A");
+      double delta = _calculateEloDelta(p.elo, avgEloB, isWinner);
+      _updatePlayerStats(p, isWinner, delta, locker);
+    }
+    for (var p in teamBPlayers) {
+      bool isWinner = (winner == "B");
+      double delta = _calculateEloDelta(p.elo, avgEloA, isWinner);
+      _updatePlayerStats(p, isWinner, delta, locker);
+    }
+  }
+
+  double _calculateEloDelta(double playerElo, double opponentAvgElo, bool isWinner) {
+    const double K = 32.0;
+    double expectedScore = 1.0 / (1.0 + math.pow(10.0, (opponentAvgElo - playerElo) / 400.0));
+    double actualScore = isWinner ? 1.0 : 0.0;
+    return K * (actualScore - expectedScore);
+  }
+
+  void _updatePlayerStats(Player p, bool isWinner, double eloDelta, LockerRoom locker) async {
+    String newStreak = (p.streak + (isWinner ? "V" : "D"));
+    if (newStreak.length > 5) newStreak = newStreak.substring(newStreak.length - 5);
+    
+    double newElo = p.elo + eloDelta;
+    List<double> newHistory = List.from(p.eloHistory)..add(newElo);
+    if (newHistory.length > 20) newHistory.removeAt(0);
+
+    await locker.savePlayer(p.copyWith(
+      streak: newStreak, 
+      elo: newElo,
+      eloHistory: newHistory,
+      wins: p.wins + (isWinner ? 1 : 0),
+      losses: p.losses + (isWinner ? 0 : 1),
+      singleWins: !settings.isDouble ? p.singleWins + (isWinner ? 1 : 0) : p.singleWins,
+      singleLosses: !settings.isDouble ? p.singleLosses + (isWinner ? 0 : 1) : p.singleLosses,
+      doubleWins: settings.isDouble ? p.doubleWins + (isWinner ? 1 : 0) : p.doubleWins,
+      doubleLosses: settings.isDouble ? p.doubleLosses + (isWinner ? 0 : 1) : p.doubleLosses,
+    ));
   }
 
   String getFormattedPoints(String team) {

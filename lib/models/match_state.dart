@@ -1,11 +1,13 @@
 import 'player.dart';
 
-enum MatchMode { tennis, padel }
+enum MatchMode { padel }
 
 class MatchSettings {
   final MatchMode mode;
   final int numberOfSets; // 1 or 3
   final bool goldenPoint; // For Padel
+  final bool isDouble;
+  final bool isRanked; // Nouveau : si faux, ne change pas les stats des joueurs
   final List<Player> teamA;
   final List<Player> teamB;
 
@@ -13,6 +15,8 @@ class MatchSettings {
     required this.mode,
     required this.numberOfSets,
     required this.goldenPoint,
+    this.isDouble = false,
+    this.isRanked = true,
     required this.teamA,
     required this.teamB,
   });

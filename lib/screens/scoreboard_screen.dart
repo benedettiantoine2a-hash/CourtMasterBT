@@ -1,9 +1,13 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../models/match_state.dart';
+import '../models/player.dart';
 import '../services/match_logic.dart';
-import '../services/volume_key_service.dart';
 import '../services/tts_service.dart';
+import '../services/volume_key_service.dart';
 import '../theme/app_theme.dart';
+import '../services/share_service.dart';
+import '../services/settings_service.dart';
 
 class ScoreboardScreen extends StatefulWidget {
   final MatchSettings settings;
@@ -16,56 +20,97 @@ class ScoreboardScreen extends StatefulWidget {
 
 class _ScoreboardScreenState extends State<ScoreboardScreen> {
   late MatchLogic _logic;
-  late VolumeKeyService _keyService;
-  late TtsService _ttsService;
+  final TtsService _tts = TtsService();
+  VolumeKeyService? _keyService;
+  final SettingsService _settings = SettingsService();
+
+  bool _vibrationEnabled = true;
+  bool _sideChangeEnabled = true;
 
   @override
   void initState() {
     super.initState();
-    _logic = MatchLogic(widget.settings);
-    _ttsService = TtsService();
-    _keyService = VolumeKeyService(onKeyAction: _handleKeyAction);
+    _logic = MatchLogic(
+      widget.settings,
+      teamAPlayers: widget.settings.teamA,
+      teamBPlayers: widget.settings.teamB,
+    );
+    _loadSettings();
+  }
+
+  Future<void> _loadSettings() async {
+    final vibration = await _settings.isVibrationEnabled();
+    final sideChange = await _settings.isSideChangeAlertEnabled();
+    final voice = await _settings.isVoiceEnabled();
+    final inputMode = await _settings.getInputMode();
     
-    // Annonce de début
-    _ttsService.speak("Début du match. Bon jeu !");
-  }
+    final isOneButton = inputMode == 'one_button';
+    
+    _keyService = VolumeKeyService(
+      onKeyAction: isOneButton ? null : _handleVolumeKey,
+      onGesture: isOneButton ? _handleGesture : null,
+      oneButtonMode: isOneButton,
+    );
 
-  void _handleKeyAction(VolumeKey key, bool isLongPress) {
     setState(() {
-      if (key == VolumeKey.P1) {
-        if (isLongPress) {
-          _announceScore();
-        } else {
-          _logic.addPoint("A");
-          _checkEvent();
-        }
-      } else {
-        if (isLongPress) {
-          _logic.undo();
-          _ttsService.speak("Annulé");
-        } else {
-          _logic.addPoint("B");
-          _checkEvent();
-        }
-      }
+      _vibrationEnabled = vibration;
+      _sideChangeEnabled = sideChange;
+      _tts.voiceEnabled = voice;
     });
+    
+    _tts.speakRandom("start");
   }
 
-  void _checkEvent() {
-    final state = _logic.state;
-    if (state.matchFinished) {
-       _ttsService.speak("Match terminé ! Victoire de l'équipe ${state.winner == "A" ? "A" : "B"}");
-    } else if (state.pointsA == 0 && state.pointsB == 0) {
-      // Game transition
-      _ttsService.announceGameWinner(state.gamesTeamA.last > state.gamesTeamB.last ? "A" : "B");
+  void _handleGesture(GestureType gesture) {
+    switch (gesture) {
+      case GestureType.singleTap:
+        _addPoint("A");
+        break;
+      case GestureType.doubleTap:
+        _addPoint("B");
+        break;
+      case GestureType.longPress:
+        setState(() => _logic.undo());
+        if (_vibrationEnabled) HapticFeedback.vibrate();
+        break;
     }
   }
 
-  void _announceScore() {
+  void _handleVolumeKey(VolumeKey key, bool isLongPress) {
+    if (isLongPress && key == VolumeKey.TeamB) {
+      setState(() => _logic.undo());
+      if (_vibrationEnabled) HapticFeedback.vibrate();
+    } else if (!isLongPress) {
+      _addPoint(key == VolumeKey.TeamA ? "A" : "B");
+    }
+  }
+
+  void _addPoint(String team) {
+    if (_vibrationEnabled) HapticFeedback.lightImpact();
+    setState(() {
+      _logic.addPoint(team);
+      _checkEvent(team);
+    });
+  }
+
+  void _checkEvent(String teamScored) {
     final state = _logic.state;
-    String scoreA = _logic.getFormattedPoints("A");
-    String scoreB = _logic.getFormattedPoints("B");
-    _ttsService.speak("Le score est de $scoreA à $scoreB");
+    if (state.matchFinished) {
+      _tts.speakRandom("win");
+    } else if (state.pointsA == 0 && state.pointsB == 0) {
+      // Un jeu vient d'être gagné
+      _tts.announceGameWinner(teamScored == "A" ? "A" : "B");
+      
+      // Annonce du changement de côté
+      int totalGames = state.gamesTeamA.reduce((a, b) => a + b) + state.gamesTeamB.reduce((a, b) => a + b);
+      if (_sideChangeEnabled && totalGames % 2 != 0) {
+        _tts.speak("Changement de côté !");
+      }
+    } else if (state.pointsA == 40 && state.pointsB == 40 && widget.settings.goldenPoint) {
+      _tts.speakRandom("golden_point");
+    } else {
+      _tts.speakScore(_logic.getFormattedPoints("A"), _logic.getFormattedPoints("B"), "", "");
+    }
   }
 
   @override
@@ -73,134 +118,183 @@ class _ScoreboardScreenState extends State<ScoreboardScreen> {
     final state = _logic.state;
 
     return Scaffold(
-      body: SafeArea(
-        child: Stack(
+      body: Container(
+        padding: const EdgeInsets.symmetric(vertical: 40, horizontal: 20),
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [Color(0xFF0A0A0A), Color(0xFF1A1A1A)],
+          ),
+        ),
+        child: Column(
           children: [
-            Column(
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                // Sets Score (Small)
-                Padding(
-                  padding: const EdgeInsets.all(16.0),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceAround,
-                    children: [
-                      _setScoreDisplay(state.gamesTeamA),
-                      Text("SETS", style: TextStyle(color: AppTheme.electricCyan, fontSize: 20)),
-                      _setScoreDisplay(state.gamesTeamB),
-                    ],
+                _setScoreDisplay(state.gamesTeamA),
+                const Text("SETS", style: TextStyle(color: Colors.white24, fontWeight: FontWeight.bold)),
+                _setScoreDisplay(state.gamesTeamB),
+              ],
+            ),
+            const Spacer(),
+            Row(
+              children: [
+                Expanded(
+                  child: GestureDetector(
+                    onTap: () => _addPoint("A"),
+                    child: _scoreBox("A", _logic.getFormattedPoints("A"), state.serverIndex % 2 == 0, widget.settings.teamA),
                   ),
                 ),
-                
-                // Points Score (Massive)
+                const SizedBox(width: 20),
                 Expanded(
-                  child: Column(
-                    children: [
-                       _scoreBox("A", _logic.getFormattedPoints("A"), state.serverIndex < 2),
-                       const Divider(color: Colors.white24, height: 1),
-                       _scoreBox("B", _logic.getFormattedPoints("B"), state.serverIndex >= 2),
-                    ],
+                  child: GestureDetector(
+                    onTap: () => _addPoint("B"),
+                    child: _scoreBox("B", _logic.getFormattedPoints("B"), state.serverIndex % 2 != 0, widget.settings.teamB),
                   ),
                 ),
               ],
             ),
-            
-            // Match Card Overlay
+            const Spacer(),
+            const Text(
+              "Maintenir Volume Bas pour annuler (Undo)",
+              style: TextStyle(color: Colors.white24, fontSize: 10),
+            ),
+            const SizedBox(height: 20),
             if (state.matchFinished)
               _buildMatchCard(state),
+            if (!state.matchFinished)
+              ElevatedButton(
+                onPressed: () => Navigator.pop(context),
+                style: ElevatedButton.styleFrom(backgroundColor: Colors.white10),
+                child: const Text("QUITTER LE MATCH"),
+              ),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildMatchCard(ScoreState state) {
+  Widget _setScoreDisplay(List<int> sets) {
+    return Row(
+      children: sets.map((games) => Container(
+        margin: const EdgeInsets.symmetric(horizontal: 4),
+        padding: const EdgeInsets.all(8),
+        decoration: BoxDecoration(
+          color: Colors.white10,
+          borderRadius: BorderRadius.circular(4),
+        ),
+        child: Text(
+          games.toString(),
+          style: const TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold),
+        ),
+      )).toList(),
+    );
+  }
+
+  Widget _scoreBox(String team, String score, bool isServing, List<Player> players) {
     return Container(
-      color: Colors.black.withOpacity(0.9),
-      width: double.infinity,
-      height: double.infinity,
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.05),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: isServing ? AppTheme.neonYellow : Colors.white10, width: 2),
+      ),
       child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          const Icon(Icons.emoji_events, color: AppTheme.neonYellow, size: 100),
-          const SizedBox(height: 20),
-          Text(
-            "VICTOIRE TEAM ${state.winner}",
-            style: const TextStyle(color: AppTheme.neonYellow, fontSize: 40, fontWeight: FontWeight.bold),
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 20),
+            child: Wrap(
+              spacing: -10,
+              children: players.map((p) => CircleAvatar(
+                radius: 25,
+                backgroundColor: AppTheme.electricCyan.withOpacity(0.2),
+                child: Text(p.emoji, style: const TextStyle(fontSize: 24)),
+              )).toList(),
+            ),
           ),
-          const SizedBox(height: 40),
-          Row(
+          Text(
+            score,
+            style: TextStyle(
+              color: isServing ? AppTheme.neonYellow : Colors.white,
+              fontSize: 100,
+              fontWeight: FontWeight.bold,
+              fontFamily: 'Courier',
+            ),
+          ),
+          const SizedBox(height: 10),
+          Text(
+            players.map((p) => p.name).join(" & "),
+            textAlign: TextAlign.center,
+            style: const TextStyle(color: Colors.white54, fontSize: 12),
+          ),
+          const SizedBox(height: 20),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMatchCard(ScoreState state) {
+    final shooter = ShareService();
+
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: AppTheme.pureBlack,
+        borderRadius: BorderRadius.circular(15),
+        border: Border.all(color: AppTheme.neonYellow),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Text("MATCH TERMINÉ", style: TextStyle(color: AppTheme.neonYellow, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 10),
+          Text(
+            "VICTOIRE EQUIPE ${state.winner}",
+            style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 20),
+           Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              _summaryBox(state.gamesTeamA, "A"),
-              const SizedBox(width: 20),
-              _summaryBox(state.gamesTeamB, "B"),
+              ElevatedButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text("RETOUR"),
+              ),
+              const SizedBox(width: 10),
+              IconButton(
+                icon: const Icon(Icons.share, color: AppTheme.neonYellow),
+                onPressed: () => shooter.shareMatchCard(_buildResultImageWidget(state)),
+              ),
             ],
-          ),
-          const SizedBox(height: 60),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text("NOUVEAU MATCH"),
           ),
         ],
       ),
     );
   }
 
-  Widget _summaryBox(List<int> sets, String team) {
-    return Column(
-      children: [
-        Text(team, style: const TextStyle(color: Colors.white, fontSize: 24)),
-        const SizedBox(height: 10),
-        Row(
-          children: sets.map((s) => Text("$s ", style: const TextStyle(color: AppTheme.electricCyan, fontSize: 32))).toList(),
-        ),
-      ],
-    );
-  }
-
-  Widget _setScoreDisplay(List<int> sets) {
-    return Row(
-      children: sets.map((s) => Container(
-        margin: const EdgeInsets.symmetric(horizontal: 4),
-        padding: const EdgeInsets.all(8),
-        decoration: BoxDecoration(
-          border: Border.all(color: AppTheme.electricCyan),
-          borderRadius: BorderRadius.circular(4),
-        ),
-        child: Text(s.toString(), style: const TextStyle(color: AppTheme.electricCyan, fontSize: 24)),
-      )).toList(),
-    );
-  }
-
-  Widget _scoreBox(String team, String score, bool isServing) {
-    return Expanded(
-      child: Container(
-        width: double.infinity,
-        color: AppTheme.pureBlack,
-        child: Stack(
-          alignment: Alignment.center,
-          children: [
-            // Display Server Arrow
-            if (isServing)
-              Positioned(
-                left: 20,
-                child: Icon(Icons.arrow_forward_ios, color: AppTheme.neonYellow, size: 40),
-              ),
-            
-            Text(
-              score,
-              style: Theme.of(context).textTheme.displayLarge?.copyWith(
-                fontSize: score.length > 2 ? 140 : 180,
-              ),
-            ),
-            
-            Positioned(
-              top: 20,
-              right: 20,
-              child: Text("EQUIPE $team", style: const TextStyle(color: Colors.white38, fontSize: 20)),
-            ),
-          ],
-        ),
+  Widget _buildResultImageWidget(ScoreState state) {
+    return Container(
+      padding: const EdgeInsets.all(30),
+      color: Colors.black,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Text("COURTMASTER BT", style: TextStyle(color: AppTheme.neonYellow, fontSize: 24, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 20),
+          Text(
+            "VICTOIRE : ${state.winner == "A" ? widget.settings.teamA.map((e) => e.name).join(' & ') : widget.settings.teamB.map((e) => e.name).join(' & ')}",
+            style: const TextStyle(color: Colors.white, fontSize: 18),
+          ),
+          const SizedBox(height: 20),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Text(state.gamesTeamA.join(' / '), style: const TextStyle(color: AppTheme.electricCyan, fontSize: 30, fontWeight: FontWeight.bold)),
+              const Text("  VS  ", style: TextStyle(color: Colors.white24, fontSize: 20)),
+              Text(state.gamesTeamB.join(' / '), style: const TextStyle(color: AppTheme.electricCyan, fontSize: 30, fontWeight: FontWeight.bold)),
+            ],
+          ),
+        ],
       ),
     );
   }
